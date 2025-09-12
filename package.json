@@ -1,0 +1,17 @@
+{
+  "name": "dentist-bot",
+  "version": "1.0.0",
+  "description": "WhatsApp bot for dental clinic",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "axios": "^1.7.0",
+    "dotenv": "^16.4.0",
+    "express": "^4.19.0",
+    "googleapis": "^130.0.0",
+    "node-cron": "^3.0.3"
+  }
+}
