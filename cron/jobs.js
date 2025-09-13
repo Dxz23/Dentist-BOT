@@ -1,27 +1,12 @@
 // cron/jobs.js
 import cron from 'node-cron';
-import { SHEET_COL, PDF_MAP, PROCEDURES } from '../config/config.js';
+import { SHEET_COL, PROCEDURES, PRE_APPT_PDF_URL, POST_APPT_PDF_URL, TZ_OFFSET } from '../config/config.js';
 import { getAllRows, updateRow } from '../services/google.js';
 import { sendMessage, buildDocument, buildButtonMessage, normalizePhone } from '../services/wa.js';
 
-/* ───────────────────── 1) PDF post-consulta (cada 5 min) ───────────────────── */
-cron.schedule('*/5 * * * *', async () => {
-  const rows = await getAllRows();
-  for (let i = 0; i < rows.length; i++) {
-    const r = rows[i];
-    if (r[SHEET_COL.STATUS] === 'COMPLETADA' && r[SHEET_COL.PDF_SENT] !== 'TRUE') {
-      const link = PDF_MAP[r[SHEET_COL.PDF_KEY]];
-      if (!link) continue;
-
-      await sendMessage(
-        buildDocument(normalizePhone(r[SHEET_COL.PHONE]), link)
-      );
-
-      r[SHEET_COL.PDF_SENT] = 'TRUE';
-      await updateRow(i + 1, r);
-    }
-  }
-});
+/* ───────────────────── (REMOVIDO) PDF post-consulta legacy ─────────────────────
+   Evitamos duplicados: el envío de PDF “después” vive abajo en la tarea de 10 min.
+*/
 
 /* ───────────────────── 2) Follow-up a 6 meses (09:00 diario) ────────────────── */
 cron.schedule('0 9 * * *', async () => {
@@ -51,13 +36,13 @@ cron.schedule('0 9 * * *', async () => {
   }
 });
 
-/* ──────────────── 3) Recordatorio 3 h antes (cada 5 min, con fallback) ──────────────── */
+/* ──────────────── 3) Recordatorio 3 h antes (cada 5 min) ──────────────── */
 cron.schedule('*/5 * * * *', async () => {
   const rows = await getAllRows();
   const now  = Date.now();
 
-  const threeH    = 3 * 60 * 60 * 1000;  // 3 horas (ms)
-  const tolerance = 5 * 60 * 1000;       // ±5 min
+  const threeH    = 3 * 60 * 60 * 1000;
+  const tolerance = 5 * 60 * 1000;
 
   for (let i = 0; i < rows.length; i++) {
     const r = rows[i];
@@ -140,7 +125,7 @@ cron.schedule('*/5 * * * *', async () => {
   }
 });
 
-/* ───────────── 4) Auto-completar y enviar PDF (cada 10 min) ───────────── */
+/* ───────────── 4) Auto-completar y enviar PDF “después” (cada 10 min) ───────────── */
 cron.schedule('*/10 * * * *', async () => {
   const rows = await getAllRows();
   const now  = Date.now();
@@ -152,15 +137,15 @@ cron.schedule('*/10 * * * *', async () => {
 
     const start = new Date(startISO).getTime();
 
+    // 4.1: marcar COMpletada 1h después de la hora
     if (r[SHEET_COL.STATUS] === 'CONFIRMADA' && now - start > 60 * 60 * 1000) {
       r[SHEET_COL.STATUS] = 'COMPLETADA';
       await updateRow(i + 1, r);
     }
 
+    // 4.2: enviar PDF de DESPUÉS si no lo hemos enviado
     if (r[SHEET_COL.STATUS] === 'COMPLETADA' && r[SHEET_COL.PDF_SENT] !== 'TRUE') {
-      const link = PDF_MAP[r[SHEET_COL.PDF_KEY]];
-      if (!link) continue;
-
+      const link = POST_APPT_PDF_URL;
       await sendMessage(buildDocument(normalizePhone(r[SHEET_COL.PHONE]), link));
       r[SHEET_COL.PDF_SENT] = 'TRUE';
       await updateRow(i + 1, r);
