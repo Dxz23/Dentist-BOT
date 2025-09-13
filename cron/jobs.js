@@ -146,7 +146,7 @@ cron.schedule('*/10 * * * *', async () => {
     // 4.2: enviar PDF de DESPUÉS si no lo hemos enviado
     if (r[SHEET_COL.STATUS] === 'COMPLETADA' && r[SHEET_COL.PDF_SENT] !== 'TRUE') {
       const link = POST_APPT_PDF_URL;
-      // Forzamos nombre de archivo para evitar "Sin título"
+      // Forzamos nombre de archivo para que se muestre como PDF real
       await sendMessage(buildDocument(normalizePhone(r[SHEET_COL.PHONE]), link, 'Cuidados_despues.pdf'));
       r[SHEET_COL.PDF_SENT] = 'TRUE';
       await updateRow(i + 1, r);
