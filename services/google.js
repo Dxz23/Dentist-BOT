@@ -4,9 +4,9 @@ import { ENV, TZ_OFFSET } from '../config/config.js';
 import fs from 'fs';
 
 /**
- * Autenticación con Google:
- * - En producción (Railway): usar env GOOGLE_CREDENTIALS con el JSON completo.
- * - En desarrollo local: leer service-account.json del proyecto.
+ * Autenticación:
+ * - Producción: variable de entorno GOOGLE_CREDENTIALS con el JSON completo.
+ * - Local: archivo service-account.json en la raíz.
  */
 let credentials;
 if (process.env.GOOGLE_CREDENTIALS) {
@@ -17,7 +17,6 @@ if (process.env.GOOGLE_CREDENTIALS) {
     throw e;
   }
 } else {
-  // Fallback útil en local
   try {
     credentials = JSON.parse(fs.readFileSync('service-account.json', 'utf8'));
   } catch (e) {
@@ -37,8 +36,8 @@ const auth = new google.auth.GoogleAuth({
 export const sheets   = google.sheets({ version: 'v4', auth });
 export const calendar = google.calendar({ version: 'v3', auth });
 
-/* ───────────────────── Helpers Sheets ───────────────────── */
-function padRow(r, n = 14) {          // columnas A:N
+/* ───────────── Helpers Sheets ───────────── */
+function padRow(r, n = 14) {
   const out = Array(n).fill('');
   for (let i = 0; i < Math.min(n, r.length); i++) out[i] = r[i];
   return out;
@@ -71,7 +70,7 @@ export async function updateRow(rowNum, values) {
   });
 }
 
-/* Guardar leads en la pestaña "leads" (A:E) */
+/* Leads (hoja "leads" A:E) */
 export async function appendLead(values) {
   await sheets.spreadsheets.values.append({
     spreadsheetId: ENV.SHEET_ID,
@@ -81,12 +80,8 @@ export async function appendLead(values) {
   });
 }
 
-/* ───────────────────── Helpers Calendar ───────────────────── */
+/* ───────────── Helpers Calendar ───────────── */
 
-/**
- * Crea evento en Google Calendar con propiedades extendidas (apptKey),
- * color, descripción, ubicación y recordatorios personalizados.
- */
 export async function createCalendarEvent(
   summary,
   isoStart,
@@ -122,10 +117,6 @@ export async function createCalendarEvent(
   });
 }
 
-/**
- * Lista eventos de un día (dateISO = 'YYYY-MM-DD') respetando el TZ_OFFSET
- * para detectar solapes con precisión local.
- */
 export async function listCalendarEventsByDate(dateISO /* 'YYYY-MM-DD' */) {
   const timeMin = `${dateISO}T00:00:00${TZ_OFFSET}`;
   const timeMax = `${dateISO}T23:59:59${TZ_OFFSET}`;
@@ -141,9 +132,6 @@ export async function listCalendarEventsByDate(dateISO /* 'YYYY-MM-DD' */) {
   return data.items || [];
 }
 
-/**
- * Busca un evento por la clave estable apptKey en extendedProperties.private.
- */
 export async function findEventByKey(apptKey) {
   const { data } = await calendar.events.list({
     calendarId: ENV.CALENDAR_ID,
@@ -154,10 +142,6 @@ export async function findEventByKey(apptKey) {
   return (data.items || [])[0] || null;
 }
 
-/**
- * Reagenda un evento usando apptKey; permite actualizar summary, duración,
- * color, descripción y ubicación.
- */
 export async function rescheduleByKey(
   apptKey,
   newISO,
@@ -182,9 +166,6 @@ export async function rescheduleByKey(
   });
 }
 
-/**
- * Elimina un evento por apptKey (si existe).
- */
 export async function deleteByKey(apptKey) {
   const ev = await findEventByKey(apptKey);
   if (ev) {
