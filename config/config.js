@@ -10,6 +10,7 @@ export const ENV = {
   CALENDAR_ID:  process.env.CALENDAR_ID,
 };
 
+// Clínica
 export const CLINIC = {
   lat:  32.525,
   lng: -117.019,
@@ -17,18 +18,18 @@ export const CLINIC = {
   addr: 'Av. Revolución 123, Tijuana',
 };
 
-// Procedimientos disponibles
+// Procedimientos disponibles (ES/EN)
 export const PROCEDURES = {
   LIMPIEZA:       { es: '🧼 Limpieza dental',      en: '🧼 Cleaning' },
   EXTRACCION:     { es: '🦷 Extracción',           en: '🦷 Extraction' },
   ORTODONCIA:     { es: '😬 Ortodoncia',           en: '😬 Braces' },
   BLANQUEAMIENTO: { es: '💎 Blanqueamiento',       en: '💎 Whitening' },
   REVISION:       { es: '📋 Revisión general',     en: '📋 General check-up' },
-  // añadidos para coincidir con PDF_MAP
   RESINA:         { es: '🧩 Resina',               en: '🧩 Composite filling' },
   ENDODONCIA:     { es: '🧠 Endodoncia',           en: '🧠 Root canal' },
 };
 
+// Detalles por procedimiento (texto + imagen)
 export const PROC_DETAILS = {
   LIMPIEZA: {
     img: 'https://i.imgur.com/cNIV947.png',
@@ -45,7 +46,7 @@ export const PROC_DETAILS = {
       ].join('\n'),
       footer: 'Confirma tu cita hoy mismo para asegurar disponibilidad.'
     },
-    en : { /* …opcional…*/ }
+    en : {}
   },
   EXTRACCION: {
     img: 'https://i.imgur.com/swN4HGt.png',
@@ -60,9 +61,9 @@ export const PROC_DETAILS = {
         '*⏱️ Duración*: 30 min aprox',
         '*💵 Desde*: $500 MXN'
       ].join('\n'),
-        footer: 'Confirma tu cita hoy mismo para asegurar disponibilidad.'
+      footer: 'Confirma tu cita hoy mismo para asegurar disponibilidad.'
     },
-    en : { /* opcional */ }
+    en : {}
   },
   ORTODONCIA: {
     img: 'https://i.imgur.com/8w3ocua.png',
@@ -80,7 +81,7 @@ export const PROC_DETAILS = {
       ].join('\n'),
       footer: 'Confirma tu cita hoy mismo para asegurar disponibilidad.'
     },
-    en : { /* opcional */ }
+    en : {}
   },
   BLANQUEAMIENTO: {
     img: 'https://i.imgur.com/WFB1Qsn.png',
@@ -98,7 +99,7 @@ export const PROC_DETAILS = {
       ].join('\n'),
       footer: 'Confirma tu cita hoy mismo para asegurar disponibilidad.'
     },
-    en : { /* opcional */ }
+    en : {}
   },
   REVISION: {
     img: 'https://i.imgur.com/jCCFA0v.png',
@@ -116,11 +117,45 @@ export const PROC_DETAILS = {
       ].join('\n'),
       footer: 'Confirma tu cita hoy mismo para asegurar disponibilidad.'
     },
-    en : { /* opcional */ }
+    en : {}
   },
-  // Puedes añadir detalles para RESINA/ENDODONCIA cuando lo desees
+  RESINA: {
+    img: 'https://i.imgur.com/cNIV947.png',
+    es : {
+      body: [
+        '🧩 *Resina* (relleno estético)',
+        '',
+        '✨ *Beneficios*:',
+        '🦷 _Restaura forma y función_',
+        '😁 _Mejora estética del diente_',
+        '',
+        '*⏱️ Duración*: 40 min',
+        '*💵 Costo*: variable'
+      ].join('\n'),
+      footer: 'Confirma tu cita hoy mismo para asegurar disponibilidad.'
+    },
+    en : {}
+  },
+  ENDODONCIA: {
+    img: 'https://i.imgur.com/swN4HGt.png',
+    es : {
+      body: [
+        '🧠 *Endodoncia* (tratamiento de conducto)',
+        '',
+        '✨ *Beneficios*:',
+        '💊 _Elimina infección y dolor_',
+        '🦷 _Conserva la pieza dental_',
+        '',
+        '*⏱️ Duración*: 60 min',
+        '*💵 Costo*: variable'
+      ].join('\n'),
+      footer: 'Confirma tu cita hoy mismo para asegurar disponibilidad.'
+    },
+    en : {}
+  }
 };
 
+// (Mantengo este mapa por compatibilidad, pero ya no lo usamos para envío)
 export const PDF_MAP = {
   LIMPIEZA:       'https://tudominio.com/pdfs/pre_limpieza.pdf',
   EXTRACCION:     'https://tudominio.com/pdfs/pre_extraccion.pdf',
@@ -131,25 +166,31 @@ export const PDF_MAP = {
   REVISION:       'https://tudominio.com/pdfs/pre_revision.pdf',
 };
 
+// >>> Enlaces RAW de GitHub para antes/después:
+export const PRE_APPT_PDF_URL  = 'https://raw.githubusercontent.com/Dxz23/Dentist-BOT/main/Antes_consulta.pdf';
+export const POST_APPT_PDF_URL = 'https://raw.githubusercontent.com/Dxz23/Dentist-BOT/main/Despues_consulta.pdf';
+
+// Columnas de la hoja
 export const SHEET_COL = {
-  TIMESTAMP:    0,   // fecha_creacion
-  NAME:         1,   // nombre
-  PHONE:        2,   // telefono
-  DATETIME:     3,   // fecha_hora_iso
-  PROCEDURE:    4,   // procedimiento
-  STATUS:       5,   // estado
-  LANG:         6,   // idioma
-  PDF_KEY:      7,   // pdf_clave
-  PDF_SENT:     8,   // pdf_enviado
-  FOLLOW_DATE:  9,   // seguimiento_fecha
-  FOLLOW_SENT: 10,   // seguimiento_enviado
-  CONFIRM_SENT: 11,  // recordatorio_3h_enviado
-  REMINDER_ACK: 12,  // confirmó desde recordatorio 3h / 2h
-  NUDGE2H_SENT: 13   // ya mandamos nudge de 2h
+  TIMESTAMP:    0,
+  NAME:         1,
+  PHONE:        2,
+  DATETIME:     3,
+  PROCEDURE:    4,
+  STATUS:       5,
+  LANG:         6,
+  PDF_KEY:      7,   // no lo usamos ya, pero mantenido
+  PDF_SENT:     8,   // se marca TRUE cuando se envía el PDF de después
+  FOLLOW_DATE:  9,
+  FOLLOW_SENT: 10,
+  CONFIRM_SENT: 11,
+  REMINDER_ACK: 12,
+  NUDGE2H_SENT: 13
 };
 
-export const TZ_OFFSET = '-07:00'; // America/Tijuana (se maneja DST en Calendar)
+export const TZ_OFFSET = '-07:00'; // America/Tijuana (DST manejado en Calendar)
 
+// Agentes/asesores notificados
 export const AGENTS = [
   '5216634825319',
   '526634825319',
@@ -159,7 +200,7 @@ export const AGENTS = [
   '+5216634825319',
 ];
 
-/* === NUEVO: Duración y color por procedimiento para Calendar === */
+/* Duración y color por procedimiento para Calendar */
 export const PROC_DURATION_MIN = {
   LIMPIEZA: 40,
   EXTRACCION: 30,
@@ -170,7 +211,6 @@ export const PROC_DURATION_MIN = {
   ENDODONCIA: 60
 };
 
-// IDs de color de Google Calendar (1..11). Ajusta los que quieras.
 export const PROC_COLOR_ID = {
   LIMPIEZA: '10',
   EXTRACCION: '11',
@@ -180,6 +220,3 @@ export const PROC_COLOR_ID = {
   RESINA: '6',
   ENDODONCIA: '4'
 };
-
-// Nota: Se eliminó la función duplicada sendScheduleIntro de este archivo.
-// La versión oficial vive en flows/booking.js
