@@ -1,8 +1,14 @@
 // index.js
 import express from 'express';
 import cron from 'node-cron';
-import { ENV, TZ_OFFSET, PROCEDURES, AGENTS, SHEET_COL, PROC_DURATION_MIN, PROC_COLOR_ID } from './config/config.js';
-import { appendLead, getAllRows, updateRow, rescheduleByKey, listCalendarEventsByDate, deleteByKey } from './services/google.js';
+import {
+  ENV, TZ_OFFSET, PROCEDURES, AGENTS, SHEET_COL,
+  PROC_DURATION_MIN, PROC_COLOR_ID
+} from './config/config.js';
+import {
+  appendLead, getAllRows, updateRow, rescheduleByKey,
+  listCalendarEventsByDate, deleteByKey
+} from './services/google.js';
 
 import {
   sendMainMenu,
@@ -15,7 +21,6 @@ import {
   sendTimeList,
   sendDayList,
   sendPeriodList,
-  proposeUpgradeToWaitlist,
   proposeUpgradeStaged,
   markUpgradeFilled
 } from './flows/booking.js';
@@ -68,16 +73,19 @@ funnelState[from] = {
   step: 'choose_proc' | 'choose_day' | 'choose_period' | 'choose_time' | 'await_name' | 'await_preconfirm',
   proc, dateISO, period, hour, lang, name?,
   lastAt: ms,
+  createdAt: ms,
   nag1Sent?: boolean,
   nag2Sent?: boolean
 }
 */
 const NUDGE_MINUTES  = 8;
 const NUDGE2_MINUTES = 25;
+const NUDGE_MAX_AGE_MIN = 90; // si pasa más de 90 min, se limpia el estado y no se nudgea
 
 function setFunnel(from, patch) {
   const prev = funnelState.get(from) || {};
-  funnelState.set(from, { ...prev, ...patch, lastAt: Date.now() });
+  const baseTimes = prev.createdAt ? {} : { createdAt: Date.now() };
+  funnelState.set(from, { ...prev, ...baseTimes, ...patch, lastAt: Date.now() });
 }
 function clearFunnel(from) { funnelState.delete(from); }
 
@@ -167,17 +175,43 @@ function nudgeCopy(step, lang, ctx = {}) {
   return base;
 }
 
-/* ✅ Nudges de abandono (cada 5 min) */
+/* 🔒 Guardas anti-mensajes-aleatorios */
+async function hasFutureAppointmentFor(phoneNormalized) {
+  const rows = await getAllRows();
+  const now  = Date.now();
+  return rows.some(r =>
+    normalizePhone(r[SHEET_COL.PHONE]) === phoneNormalized &&
+    r[SHEET_COL.STATUS] !== 'CANCELADA' &&
+    r[SHEET_COL.DATETIME] &&
+    new Date(r[SHEET_COL.DATETIME]).getTime() > now
+  );
+}
+
+/* ✅ Nudges de abandono (cada 5 min) — con guardas */
 cron.schedule('*/5 * * * *', async () => {
   const now = Date.now();
-  for (const [from, st] of funnelState.entries()) {
+  for (const [from, st] of Array.from(funnelState.entries())) {
     const lang = st.lang || 'es';
     const to   = normalizePhone(from);
-    const ms = now - (st.lastAt || 0);
-    const min = ms / 60000;
+    const msSinceLast = now - (st.lastAt || 0);
+    const minSinceLast = msSinceLast / 60000;
+    const ageMin = (now - (st.createdAt || now)) / 60000;
 
-    const needs1 = !st.nag1Sent && min >= NUDGE_MINUTES && min < NUDGE2_MINUTES;
-    const needs2 = !st.nag2Sent && min >= NUDGE2_MINUTES;
+    // 0) Si el estado es muy viejo, limpiar y no enviar nada
+    if (ageMin > NUDGE_MAX_AGE_MIN) {
+      funnelState.delete(from);
+      continue;
+    }
+
+    // 1) Si la persona ya tiene una cita futura: limpiar y NO nudgear
+    if (await hasFutureAppointmentFor(to)) {
+      funnelState.delete(from);
+      continue;
+    }
+
+    // 2) Ventanas de nudge
+    const needs1 = !st.nag1Sent && minSinceLast >= NUDGE_MINUTES && minSinceLast < NUDGE2_MINUTES;
+    const needs2 = !st.nag2Sent && minSinceLast >= NUDGE2_MINUTES && minSinceLast < NUDGE_MAX_AGE_MIN;
 
     if (!needs1 && !needs2) continue;
 
@@ -211,6 +245,9 @@ cron.schedule('*/5 * * * *', async () => {
 });
 
 /* ────────── WEBHOOK ────────── */
+const app = express();
+app.use(express.json());
+
 app.post('/webhook', async (req, res) => {
   const value = req.body.entry?.[0]?.changes?.[0]?.value;
   if (!value?.messages) return res.sendStatus(200);
@@ -230,6 +267,7 @@ app.post('/webhook', async (req, res) => {
   // —— Auto-bienvenida si es su primer texto y no vio nada antes
   if (msg.type === 'text' && !seenUsers.has(from)) {
     seenUsers.add(from);
+    clearFunnel(from); // por si hubieran restos
     await sendMainMenu(to);
     return res.sendStatus(200);
   }
@@ -267,7 +305,6 @@ app.post('/webhook', async (req, res) => {
     const looksLikeName = nameRx.test(text) && !/[?!.:,;\d@]/.test(text);
     if (!state.name && looksLikeName) {
       advisorState.set(from, { ...state, name: text, startedAt: Date.now() });
-      await sendMessage({ messaging_product:'whatsapp', to, text:{ body:'Perfecto, ahora cuéntanos *tu duda*.' } });
       return res.sendStatus(200);
     }
 
@@ -378,7 +415,7 @@ app.post('/webhook', async (req, res) => {
     if (id.startsWith('proc_')) {
       const proc = id.slice(5);
       setFunnel(from, { step:'choose_day', proc, lang });
-      await sendProcedureInfo(to, proc, lang); 
+      await sendProcedureInfo(to, proc, lang);
       return res.sendStatus(200);
     }
 
@@ -433,6 +470,7 @@ app.post('/webhook', async (req, res) => {
         const idx     = rows.findIndex(r => r[SHEET_COL.DATETIME] === state.oldISO);
         if (idx === -1) {
           rescheduleState.delete(from);
+          clearFunnel(from);
           await sendMessage({ messaging_product:'whatsapp', to, text:{ body:'⚠️ No pude encontrar tu cita anterior. Intenta de nuevo con *menú*.' }});
           return res.sendStatus(200);
         }
@@ -516,7 +554,7 @@ app.post('/webhook', async (req, res) => {
       pendingByUser.delete(from);
       rescheduleState.delete(from);
       clearFunnel(from);
-      await sendMessage({ messaging_product:'whatsapp', to, text:{ body:'✅ Sin problema. He cancelado el proceso. Si deseas, escribe *menú* para empezar de nuevo.' } });
+      await sendMessage({ messaging_product:'whatsapp', to, text:{ body:'✅ He cancelado el proceso. Si deseas, escribe *menú* para empezar de nuevo.' } });
       return res.sendStatus(200);
     }
 
@@ -609,6 +647,7 @@ app.post('/webhook', async (req, res) => {
       const rows   = await getAllRows();
       const r = rows.find(rr => rr[SHEET_COL.DATETIME] === oldISO);
       if (!r) {
+        clearFunnel(from);
         await sendMessage({ messaging_product:'whatsapp', to, text:{ body:'⚠️ No encontré tu cita para reagendar.' } });
         return res.sendStatus(200);
       }
@@ -627,6 +666,7 @@ app.post('/webhook', async (req, res) => {
       const rows = await getAllRows();
       const idx  = rows.findIndex(r => r[SHEET_COL.DATETIME] === oldISO && normalizePhone(r[SHEET_COL.PHONE]) === to);
       if (idx === -1) {
+        clearFunnel(from);
         await sendMessage({ messaging_product:'whatsapp', to, text:{ body:'⚠️ No pude encontrar tu cita para moverla.' } });
         return res.sendStatus(200);
       }
@@ -642,6 +682,7 @@ app.post('/webhook', async (req, res) => {
       });
 
       if (takenSheet || conflictCal) {
+        clearFunnel(from);
         await sendMessage({ messaging_product:'whatsapp', to, text:{ body:'😕 Ese espacio ya fue tomado por otra persona. Mantengo tu hora original.' } });
         return res.sendStatus(200);
       }
@@ -679,12 +720,14 @@ app.post('/webhook', async (req, res) => {
       }));
 
       markUpgradeFilled(newISO);
+      clearFunnel(from);
       await proposeUpgradeStaged(oldISO, { perWave: 3, delayMinutes: 8, lookaheadDays: 2 });
 
       return res.sendStatus(200);
     }
 
     if (id.startsWith('upgrade_skip__')) {
+      clearFunnel(from);
       await sendMessage({ messaging_product:'whatsapp', to, text:{ body:'👌 ¡Gracias! Mantengo tu cita como estaba.' } });
       return res.sendStatus(200);
     }
@@ -710,8 +753,8 @@ app.post('/webhook', async (req, res) => {
         rows[idx][SHEET_COL.REMINDER_ACK] = 'TRUE';
         await updateRow(idx + 1, rows[idx]);
       }
-      await sendMessage({ messaging_product:'whatsapp', to, text:{ body:'✅ ¡Tu asistencia quedó confirmada! Nos vemos pronto.' } });
       clearFunnel(from);
+      await sendMessage({ messaging_product:'whatsapp', to, text:{ body:'✅ ¡Tu asistencia quedó confirmada! Nos vemos pronto.' } });
       return res.sendStatus(200);
     }
 
@@ -723,8 +766,8 @@ app.post('/webhook', async (req, res) => {
         rows[idx][SHEET_COL.REMINDER_ACK] = 'TRUE';
         await updateRow(idx + 1, rows[idx]);
       }
-      await sendMessage({ messaging_product:'whatsapp', to, text:{ body:'✅ ¡Gracias! Te esperamos a tu cita.' } });
       clearFunnel(from);
+      await sendMessage({ messaging_product:'whatsapp', to, text:{ body:'✅ ¡Gracias! Te esperamos a tu cita.' } });
       return res.sendStatus(200);
     }
 
@@ -752,8 +795,9 @@ app.post('/webhook', async (req, res) => {
     return res.sendStatus(200);
   }
 
-  // Fallback: Si nada coincidió y es texto, manda menú
-  if (msg.type === 'text') {
+  // Fallback: Si nada coincidió y es texto u otra interacción, manda menú y limpia cualquier estado viejo
+  if (msg.type === 'text' || msg.type === 'interactive') {
+    clearFunnel(from);
     await sendMainMenu(to);
   }
 
