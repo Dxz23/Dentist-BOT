@@ -7,7 +7,7 @@ export function normalizePhone(input) {
   if (d.startsWith('521')) return d;
   if (d.startsWith('52'))  return '521' + d.slice(2);
   if (d.length === 10)     return '521' + d;
-  return d; // fallback
+  return d;
 }
 
 const instance = axios.create({
