@@ -1,6 +1,6 @@
 // index.js
 import express from 'express';
-import cron from 'node-cron'; // ✅ NEW
+import cron from 'node-cron';
 import { ENV, TZ_OFFSET, PROCEDURES, AGENTS, SHEET_COL, PROC_DURATION_MIN, PROC_COLOR_ID } from './config/config.js';
 import { appendLead, getAllRows, updateRow, rescheduleByKey, listCalendarEventsByDate, deleteByKey } from './services/google.js';
 
@@ -15,9 +15,9 @@ import {
   sendTimeList,
   sendDayList,
   sendPeriodList,
-  proposeUpgradeToWaitlist,   // (legacy)
-  proposeUpgradeStaged,       // ✅ OLAS 8 min
-  markUpgradeFilled           // ✅
+  proposeUpgradeToWaitlist,
+  proposeUpgradeStaged,
+  markUpgradeFilled
 } from './flows/booking.js';
 
 import './cron/jobs.js';
@@ -28,11 +28,40 @@ const processed = new Set();
 const MAX_IDS   = 5000;
 
 /* ────────── estados ────────── */
-const pendingByUser   = new Map(); // wa_id → { proc, dateISO, hour } (citas nuevas)
+const pendingByUser   = new Map(); // wa_id → { proc, dateISO, hour }
 const advisorState    = new Map(); // wa_id → { name?: string, startedAt }
 const rescheduleState = new Map(); // wa_id → { oldISO, proc, lang, name }
 
-/* ✅ NEW: Estado de embudo para nudges y reanudación */
+/* ────────── INTENT: bienvenida y palabras clave ────────── */
+const seenUsers = new Set();
+
+/** Devuelve un intent simple a partir de texto libre */
+function intentFromText(txt) {
+  const t = (txt || '').toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '');
+
+  if (/\b(hola|buenas|menu|men[uú])\b/.test(t)) return { type: 'MENU' };
+  if (/\b(agendar|cita|agenda|programar|reservar)\b/.test(t)) return { type: 'BOOK' };
+  if (/\b(ubicacion|direccion|como llegar|mapa)\b/.test(t)) return { type: 'LOCATION' };
+  if (/\b(asesor|asesora|humano|ayuda|advisor)\b/.test(t)) return { type: 'ADVISOR' };
+
+  // procedimientos
+  const procMap = {
+    limpieza: 'LIMPIEZA',
+    extraccion: 'EXTRACCION',
+    ortodoncia: 'ORTODONCIA',
+    blanqueamiento: 'BLANQUEAMIENTO',
+    revision: 'REVISION',
+    resina: 'RESINA',
+    endodoncia: 'ENDODONCIA',
+  };
+  for (const k of Object.keys(procMap)) {
+    if (t.includes(k)) return { type: 'PROC', key: procMap[k] };
+  }
+
+  return { type: 'UNKNOWN' };
+}
+
+/* ✅ Estado de embudo para nudges y reanudación */
 const funnelState = new Map();
 /*
 funnelState[from] = {
@@ -83,7 +112,7 @@ async function notifyAgentsByText({ name, phone, message }) {
   }
 }
 
-/* ✅ NEW: Nudge builder por etapa */
+/* ✅ Copys de nudge */
 function nudgeCopy(step, lang, ctx = {}) {
   const procLabel = ctx.proc ? (PROCEDURES[ctx.proc]?.[lang] || ctx.proc) : '';
   const base = {
@@ -138,7 +167,7 @@ function nudgeCopy(step, lang, ctx = {}) {
   return base;
 }
 
-/* ✅ NEW: cron para nudges de abandono (cada 5 min) */
+/* ✅ Nudges de abandono (cada 5 min) */
 cron.schedule('*/5 * * * *', async () => {
   const now = Date.now();
   for (const [from, st] of funnelState.entries()) {
@@ -187,8 +216,7 @@ app.post('/webhook', async (req, res) => {
   if (!value?.messages) return res.sendStatus(200);
 
   const msg = value.messages[0];
-  console.dir(msg, { depth: null, colors: true });
-  if (msg.from === ENV.PHONE_ID) return res.sendStatus(200);
+  if (!msg) return res.sendStatus(200);
 
   const key = msg.context?.id || msg.id;
   if (processed.has(key)) return res.sendStatus(200);
@@ -199,6 +227,13 @@ app.post('/webhook', async (req, res) => {
   const to   = normalizePhone(from);
   const lang = 'es';
 
+  // —— Auto-bienvenida si es su primer texto y no vio nada antes
+  if (msg.type === 'text' && !seenUsers.has(from)) {
+    seenUsers.add(from);
+    await sendMainMenu(to);
+    return res.sendStatus(200);
+  }
+
   /* ───── ASESOR: manejo de 1 o 2 mensajes ───── */
   if (msg.text && advisorState.has(from)) {
     const state = advisorState.get(from) || {};
@@ -208,7 +243,7 @@ app.post('/webhook', async (req, res) => {
     const lines = text.split('\n').map(s => s.trim()).filter(Boolean);
     const nameRx = /^[A-Za-zÁÉÍÓÚÜÑáéíóúüñ.'\- ]{3,60}$/u;
 
-    // Caso A: "Nombre\nDuda..."
+    // A) "Nombre\nDuda..."
     if (!state.name && lines.length >= 2 && nameRx.test(lines[0])) {
       const name = lines[0];
       const note = lines.slice(1).join('\n');
@@ -228,7 +263,7 @@ app.post('/webhook', async (req, res) => {
       return res.sendStatus(200);
     }
 
-    // Caso B: nombre solo
+    // B) nombre solo
     const looksLikeName = nameRx.test(text) && !/[?!.:,;\d@]/.test(text);
     if (!state.name && looksLikeName) {
       advisorState.set(from, { ...state, name: text, startedAt: Date.now() });
@@ -236,7 +271,7 @@ app.post('/webhook', async (req, res) => {
       return res.sendStatus(200);
     }
 
-    // Caso C: duda
+    // C) duda
     const name = state.name || profileName || 'Paciente';
     const note = text;
 
@@ -255,16 +290,44 @@ app.post('/webhook', async (req, res) => {
     return res.sendStatus(200);
   }
 
-  /* ───── TEXTO: activa “asesor/asesora/advisor” ───── */
-  if (msg.text && /(?:^|\s)(asesor|asesora|advisor)(?:\s|$)/i.test(msg.text.body)) {
-    advisorState.set(from, { startedAt: Date.now() });
-    clearFunnel(from);
-    await sendMessage({
-      messaging_product: 'whatsapp',
-      to,
-      text: { body: ['🧑‍💼 *Asesor en línea*','Puedes escribir *tu nombre y tu duda* ,','Un asesor te responderá en breve 😊'].join('\n') }
-    });
-    return res.sendStatus(200);
+  /* ───── INTENTS por TEXTO (sin depender del “Menu”) ───── */
+  if (msg.text?.body) {
+    const intent = intentFromText(msg.text.body);
+
+    if (intent.type === 'MENU') {
+      clearFunnel(from);
+      await sendMainMenu(to);
+      return res.sendStatus(200);
+    }
+
+    if (intent.type === 'BOOK') {
+      setFunnel(from, { step:'choose_proc', lang });
+      await startProcedureFlow(to, lang);
+      return res.sendStatus(200);
+    }
+
+    if (intent.type === 'LOCATION') {
+      clearFunnel(from);
+      await sendLocationPlusText(to);
+      return res.sendStatus(200);
+    }
+
+    if (intent.type === 'ADVISOR') {
+      advisorState.set(from, { startedAt: Date.now() });
+      clearFunnel(from);
+      await sendMessage({
+        messaging_product: 'whatsapp',
+        to,
+        text: { body: ['🧑‍💼 *Asesor en línea*','Puedes escribir *tu nombre y tu duda*,','Un asesor te responderá en breve 😊'].join('\n') }
+      });
+      return res.sendStatus(200);
+    }
+
+    if (intent.type === 'PROC') {
+      setFunnel(from, { step:'choose_day', proc: intent.key, lang });
+      await sendProcedureInfo(to, intent.key, lang);
+      return res.sendStatus(200);
+    }
   }
 
   /* ───── TEXTO: nombre tras elegir hora (flujo de cita) ───── */
@@ -292,13 +355,6 @@ app.post('/webhook', async (req, res) => {
     return res.sendStatus(200);
   }
 
-  /* ───── COMANDO “menú” ───── */
-  if (msg.text && /menu|menú/i.test(msg.text.body)) {
-    clearFunnel(from);
-    await sendMainMenu(to, lang);
-    return res.sendStatus(200);
-  }
-
   /* ───── RESPUESTA LISTA (list_reply) ───── */
   if (msg.interactive?.list_reply) {
     const id = msg.interactive.list_reply.id;
@@ -321,7 +377,7 @@ app.post('/webhook', async (req, res) => {
 
     if (id.startsWith('proc_')) {
       const proc = id.slice(5);
-      setFunnel(from, { step:'choose_day', proc, lang }); // ✅ marcamos para nudge
+      setFunnel(from, { step:'choose_day', proc, lang });
       await sendProcedureInfo(to, proc, lang); 
       return res.sendStatus(200);
     }
@@ -348,7 +404,6 @@ app.post('/webhook', async (req, res) => {
         const state   = rescheduleState.get(from);
         const newISO  = `${dateISO}T${hr}:00${TZ_OFFSET}`;
 
-        // Revalidación rápida
         const rows    = await getAllRows();
         const conflictSheet = rows.some(r =>
           r[SHEET_COL.DATETIME] === newISO &&
@@ -392,7 +447,6 @@ app.post('/webhook', async (req, res) => {
         const durationMin = PROC_DURATION_MIN[state.proc] || 30;
         const colorId   = PROC_COLOR_ID?.[state.proc];
 
-        // reagendar por apptKey estable (timestamp__phone)
         const apptKey = `${r[SHEET_COL.TIMESTAMP]}__${to}`;
         await rescheduleByKey(apptKey, newISO, { summary, durationMin, colorId });
 
@@ -418,7 +472,7 @@ app.post('/webhook', async (req, res) => {
         return res.sendStatus(200);
       }
 
-      // Flujo normal (cita nueva)
+      // Flujo normal
       pendingByUser.set(from, { proc, dateISO, hour: hr });
       setFunnel(from, { step:'await_name', proc, dateISO, hour: hr, lang });
       await sendMessage({ messaging_product:'whatsapp', to, text:{ body:'📝 Por favor escribe tu *nombre completo* para la cita:' } });
@@ -471,36 +525,36 @@ app.post('/webhook', async (req, res) => {
       const parts = id.split('_');
       const kind = parts[1];
       switch (kind) {
-        case 'choose': // resume_choose_proc
+        case 'choose':
           setFunnel(from, { step:'choose_proc', lang });
           await startProcedureFlow(to, lang);
           break;
-        case 'day': { // resume_day_<proc>
+        case 'day': {
           const proc = parts[2];
           setFunnel(from, { step:'choose_day', proc, lang });
           await sendDayList(to, proc, lang);
           break;
         }
-        case 'period': { // resume_period_<proc>_<dateISO>
+        case 'period': {
           const proc = parts[2]; const dateISO = parts[3];
           setFunnel(from, { step:'choose_period', proc, dateISO, lang });
           await sendPeriodList(to, proc, dateISO, lang);
           break;
         }
-        case 'time': { // resume_time_<proc>_<dateISO>_<period>
+        case 'time': {
           const proc = parts[2]; const dateISO = parts[3]; const period = parts[4];
           setFunnel(from, { step:'choose_time', proc, dateISO, period, lang });
           await sendTimeList(to, proc, dateISO, period, lang);
           break;
         }
-        case 'name': { // resume_name_<proc>_<dateISO>_<hour>
+        case 'name': {
           const proc = parts[2]; const dateISO = parts[3]; const hour = parts[4];
           pendingByUser.set(from, { proc, dateISO, hour });
           setFunnel(from, { step:'await_name', proc, dateISO, hour, lang });
           await sendMessage({ messaging_product:'whatsapp', to, text:{ body:'📝 Por favor escribe tu *nombre completo* para la cita:' } });
           break;
         }
-        case 'pre': { // resume_pre_<proc>_<dateISO>_<hour>_<nameSlug>
+        case 'pre': {
           const proc = parts[2]; const dateISO = parts[3]; const hour = parts[4];
           const name = decodeURIComponent((parts.slice(5).join('_') || '').replace(/-/g,'_')).replace(/_/g,' ');
           const isoStart = `${dateISO}T${hour}:00${TZ_OFFSET}`;
@@ -566,7 +620,7 @@ app.post('/webhook', async (req, res) => {
       return res.sendStatus(200);
     }
 
-    // ✅ Aceptar adelantar cita (upgrade)
+    // Aceptar adelantar (upgrade)
     if (id.startsWith('upgrade_accept__')) {
       const payload = id.slice('upgrade_accept__'.length);
       const [newISO, oldISO] = payload.split('__');
@@ -577,7 +631,6 @@ app.post('/webhook', async (req, res) => {
         return res.sendStatus(200);
       }
 
-      // Verificar slot
       const takenSheet = rows.some(r => r[SHEET_COL.DATETIME] === newISO && r[SHEET_COL.STATUS] !== 'CANCELADA');
       const events = await listCalendarEventsByDate(newISO.slice(0,10));
       const slotStart = new Date(newISO);
@@ -593,7 +646,6 @@ app.post('/webhook', async (req, res) => {
         return res.sendStatus(200);
       }
 
-      // OK: mover
       const r = rows[idx];
       const langRow = r[SHEET_COL.LANG] || 'es';
       const procKey = r[SHEET_COL.PROCEDURE];
@@ -632,7 +684,6 @@ app.post('/webhook', async (req, res) => {
       return res.sendStatus(200);
     }
 
-    // Rechazar adelantar
     if (id.startsWith('upgrade_skip__')) {
       await sendMessage({ messaging_product:'whatsapp', to, text:{ body:'👌 ¡Gracias! Mantengo tu cita como estaba.' } });
       return res.sendStatus(200);
@@ -664,7 +715,6 @@ app.post('/webhook', async (req, res) => {
       return res.sendStatus(200);
     }
 
-    // Confirmación desde nudge 2h
     if (id.startsWith('confirm2h_')) {
       const iso = id.slice('confirm2h_'.length);
       const rows = await getAllRows();
@@ -680,10 +730,8 @@ app.post('/webhook', async (req, res) => {
 
     if (id.startsWith('cancel_')) {
       const iso = id.slice(7);
-      // 1) Marcar en hoja
       await markStatus(iso, 'CANCELADA');
 
-      // 2) Eliminar evento de Calendar por apptKey estable (timestamp__phone)
       const rows = await getAllRows();
       const row = rows.find(r => r[SHEET_COL.DATETIME] === iso && normalizePhone(r[SHEET_COL.PHONE]) === to);
       if (row) {
@@ -691,19 +739,22 @@ app.post('/webhook', async (req, res) => {
         try { await deleteByKey(apptKeyCancel); } catch {}
       }
 
-      // 3) Aviso al usuario
       pendingByUser.delete(from);
       rescheduleState.delete(from);
       clearFunnel(from);
       await sendMessage({ messaging_product:'whatsapp', to, text:{ body:'❌ Cita cancelada. Si necesitas otra hora, escribe *menú*.' } });
 
-      // 4) Ofrecer el hueco en olas
       await proposeUpgradeStaged(iso, { perWave: 3, delayMinutes: 8, lookaheadDays: 2 });
 
       return res.sendStatus(200);
     }
 
     return res.sendStatus(200);
+  }
+
+  // Fallback: Si nada coincidió y es texto, manda menú
+  if (msg.type === 'text') {
+    await sendMainMenu(to);
   }
 
   return res.sendStatus(200);
