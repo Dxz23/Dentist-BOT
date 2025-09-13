@@ -79,7 +79,7 @@ export const PROC_DETAILS = {
         '*⏱️ Duración*: 20–30 min',
         '*💵 Costo*: $350 MXN'
       ].join('\n'),
-      footer: 'Confirma tu cita hoy mismo para asegurar disponibilidad.'
+        footer: 'Confirma tu cita hoy mismo para asegurar disponibilidad.'
     },
     en : {}
   },
@@ -155,7 +155,7 @@ export const PROC_DETAILS = {
   }
 };
 
-// (Mantengo este mapa por compatibilidad, pero ya no lo usamos para envío)
+// (Compatibilidad; ya no se usa directamente)
 export const PDF_MAP = {
   LIMPIEZA:       'https://tudominio.com/pdfs/pre_limpieza.pdf',
   EXTRACCION:     'https://tudominio.com/pdfs/pre_extraccion.pdf',
