@@ -79,7 +79,7 @@ export const PROC_DETAILS = {
         '*⏱️ Duración*: 20–30 min',
         '*💵 Costo*: $350 MXN'
       ].join('\n'),
-        footer: 'Confirma tu cita hoy mismo para asegurar disponibilidad.'
+      footer: 'Confirma tu cita hoy mismo para asegurar disponibilidad.'
     },
     en : {}
   },
