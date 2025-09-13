@@ -108,7 +108,7 @@ export async function proposeUpgradeToWaitlist(cancelISO) {
     );
 
     const buttons = [
-      { type:'reply', reply:{ id:`upgrade_accept__${cancelISO}__${r[SHEET_COL.DATETIME]}`, title:(lang==='en'?'✅ Take it':'✅ Tomarlo') } },
+      { type:'reply', reply:{ id:`upgrade_accept__${cancelISO}__${r[SHEET_COL.DATETIME]}`, title:(lang==='en'?'✅ Tomarlo':'✅ Tomarlo') } },
       { type:'reply', reply:{ id:`upgrade_skip__${cancelISO}__${r[SHEET_COL.DATETIME]}`,   title:(lang==='en'?'No, thanks':'No gracias') } }
     ];
 
@@ -462,31 +462,18 @@ export async function finalizeBooking(phoneRaw, name, procKey, isoStart, lang) {
     }
   }
 
-  // Ubicación + PDF de ANTES
+  /* ───────── ENVÍO FINAL (lo que pediste) ─────────
+     1) Ubicación
+     2) Indicaciones (PDF real, con nombre de archivo)
+     3) Mensaje corto de confirmación
+     (Sin tarjeta de “Tu cita quedó agendada”) */
   await sendMessage(buildLocation(phone, CLINIC));
-  await sendMessage(buildDocument(phone, PRE_APPT_PDF_URL));
-
-  const label = new Date(isoStart).toLocaleString(lang==='en'?'en-US':'es-MX', {
-    weekday:'long', day:'numeric', month:'long', hour:'2-digit', minute:'2-digit', hour12:true
-  }).replace(/\./g,'');
-
-  await sendMessage(buildButtonMessage({
+  await sendMessage(buildDocument(phone, PRE_APPT_PDF_URL, 'Indicaciones.pdf'));
+  await sendMessage({
+    messaging_product: 'whatsapp',
     to: phone,
-    body: [
-      '🗓️ *Tu cita quedó agendada*',
-      `👤 *Nombre:* ${name}`,
-      `🦷 *Procedimiento:* ${PROCEDURES[procKey][lang]}`,
-      `📍 *Clínica:* ${CLINIC.name}`,
-      `⏰ *Fecha/Hora:* ${label}`,
-      '',
-      '¿Deseas hacer otra acción?'
-    ].join('\n'),
-    buttons: [
-      { type:'reply', reply:{ id:`resched_${isoStart}`, title: lang==='en'?'🔁 Reschedule':'🔁 Reagendar' } },
-      { type:'reply', reply:{ id:`cancel_${isoStart}`,  title: lang==='en'?'❌ Cancel':'❌ Cancelar'   } },
-      { type:'reply', reply:{ id:'main_menu',           title:'🏠 Menú' } }
-    ]
-  }));
+    text: { body: '✅¡Tu cita ha sido confirmada! Nos vemos pronto.' }
+  });
 
   return { ok:true };
 }
