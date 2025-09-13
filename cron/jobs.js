@@ -137,7 +137,7 @@ cron.schedule('*/10 * * * *', async () => {
 
     const start = new Date(startISO).getTime();
 
-    // 4.1: marcar COMpletada 1h después de la hora
+    // 4.1: marcar COMPLETADA 1h después de la hora
     if (r[SHEET_COL.STATUS] === 'CONFIRMADA' && now - start > 60 * 60 * 1000) {
       r[SHEET_COL.STATUS] = 'COMPLETADA';
       await updateRow(i + 1, r);
@@ -146,7 +146,8 @@ cron.schedule('*/10 * * * *', async () => {
     // 4.2: enviar PDF de DESPUÉS si no lo hemos enviado
     if (r[SHEET_COL.STATUS] === 'COMPLETADA' && r[SHEET_COL.PDF_SENT] !== 'TRUE') {
       const link = POST_APPT_PDF_URL;
-      await sendMessage(buildDocument(normalizePhone(r[SHEET_COL.PHONE]), link));
+      // Forzamos nombre de archivo para evitar "Sin título"
+      await sendMessage(buildDocument(normalizePhone(r[SHEET_COL.PHONE]), link, 'Cuidados_despues.pdf'));
       r[SHEET_COL.PDF_SENT] = 'TRUE';
       await updateRow(i + 1, r);
     }
