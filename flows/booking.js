@@ -188,7 +188,7 @@ async function sendWave(slotISO, candidates, limit, randomize=false){
     if (ctrl.sentTo.has(to)) continue;
 
     const lang = r[SHEET_COL.LANG] || 'es';
-    const proc = r[SHEET_COL.PROCEDURE];
+    const proc = r[SHEET_COL.PROCEDURE'];
     const body = buildUpgradeBody(proc, lang, slotISO, r[SHEET_COL.DATETIME]);
     const buttons = [
       { type:'reply', reply:{ id:`upgrade_accept__${slotISO}__${r[SHEET_COL.DATETIME]}`, title:(lang==='en'?'✅ Take it':'✅ Tomarlo') } },
@@ -469,7 +469,6 @@ export async function finalizeBooking(phoneRaw, name, procKey, isoStart, lang) {
      3) Mensaje de confirmación (debe ir al final) */
   await sendMessage(buildDocument(phone, PRE_APPT_PDF_URL, 'Indicaciones.pdf'));
   await sendMessage(buildLocation(phone, CLINIC));
-  // Breve espera: ayuda a que el archivo se muestre primero antes del texto final.
   await sleep(900);
   await sendMessage({
     messaging_product: 'whatsapp',
