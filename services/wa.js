@@ -94,11 +94,12 @@ export function buildLocation(to, loc) {
   };
 }
 
-export function buildDocument(to, link) {
+/* ✅ Forzamos nombre para que WhatsApp lo trate como PDF real y no “sin título/HTML” */
+export function buildDocument(to, link, filename = 'Indicaciones.pdf') {
   return {
     messaging_product: 'whatsapp',
     to,
     type: 'document',
-    document: { link, caption: '📝 Indicaciones' }
+    document: { link, caption: '📝 Indicaciones', filename }
   };
 }
