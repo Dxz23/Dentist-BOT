@@ -1,12 +1,10 @@
 // cron/jobs.js
 import cron from 'node-cron';
-import { SHEET_COL, PROCEDURES, PRE_APPT_PDF_URL, POST_APPT_PDF_URL, TZ_OFFSET } from '../config/config.js';
+import {
+  SHEET_COL, PROCEDURES, POST_APPT_PDF_URL, TZ_OFFSET
+} from '../config/config.js';
 import { getAllRows, updateRow } from '../services/google.js';
 import { sendMessage, buildDocument, buildButtonMessage, normalizePhone } from '../services/wa.js';
-
-/* ───────────────────── (REMOVIDO) PDF post-consulta legacy ─────────────────────
-   Evitamos duplicados: el envío de PDF “después” vive abajo en la tarea de 10 min.
-*/
 
 /* ───────────────────── 2) Follow-up a 6 meses (09:00 diario) ────────────────── */
 cron.schedule('0 9 * * *', async () => {
@@ -146,7 +144,6 @@ cron.schedule('*/10 * * * *', async () => {
     // 4.2: enviar PDF de DESPUÉS si no lo hemos enviado
     if (r[SHEET_COL.STATUS] === 'COMPLETADA' && r[SHEET_COL.PDF_SENT] !== 'TRUE') {
       const link = POST_APPT_PDF_URL;
-      // Forzamos nombre de archivo para que se muestre como PDF real
       await sendMessage(buildDocument(normalizePhone(r[SHEET_COL.PHONE]), link, 'Cuidados_despues.pdf'));
       r[SHEET_COL.PDF_SENT] = 'TRUE';
       await updateRow(i + 1, r);
