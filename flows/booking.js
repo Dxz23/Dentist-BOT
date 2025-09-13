@@ -30,6 +30,7 @@ const UPGRADE_BROADCAST = 3;
 const UPGRADE_LOOKAHEAD_DAYS = 2;
 function sameDate(isoA, isoB) { return isoA.slice(0,10) === isoB.slice(0,10); }
 function shuffle(a){for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}return a;}
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 async function getUpgradeCandidates(cancelISO) {
   const rows = await getAllRows();
@@ -462,13 +463,14 @@ export async function finalizeBooking(phoneRaw, name, procKey, isoStart, lang) {
     }
   }
 
-  /* ───────── ENVÍO FINAL (lo que pediste) ─────────
-     1) Ubicación
-     2) Indicaciones (PDF real, con nombre de archivo)
-     3) Mensaje corto de confirmación
-     (Sin tarjeta de “Tu cita quedó agendada”) */
-  await sendMessage(buildLocation(phone, CLINIC));
+  /* ───────── ENVÍO FINAL (orden requerido) ─────────
+     1) PDF (documento real, sin caption extra)
+     2) Ubicación
+     3) Mensaje de confirmación (debe ir al final) */
   await sendMessage(buildDocument(phone, PRE_APPT_PDF_URL, 'Indicaciones.pdf'));
+  await sendMessage(buildLocation(phone, CLINIC));
+  // Breve espera: ayuda a que el archivo se muestre primero antes del texto final.
+  await sleep(900);
   await sendMessage({
     messaging_product: 'whatsapp',
     to: phone,
