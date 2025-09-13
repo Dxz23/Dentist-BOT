@@ -1,6 +1,6 @@
 // flows/booking.js
 import {
-  PROCEDURES, PDF_MAP, CLINIC, SHEET_COL, TZ_OFFSET, PROC_DETAILS,
+  PROCEDURES, PRE_APPT_PDF_URL, POST_APPT_PDF_URL, CLINIC, SHEET_COL, TZ_OFFSET, PROC_DETAILS,
   PROC_DURATION_MIN, PROC_COLOR_ID
 } from '../config/config.js';
 import {
@@ -22,14 +22,14 @@ import {
   deleteByKey
 } from '../services/google.js';
 
-/* ─────── CONFIGURACIÓN ─────── */
+/* ───── Config ───── */
 const hours = ['09:00', '13:00', '17:00'];
 
-/* ─────── Waitlist / Adelantar lógica ─────── */
-const UPGRADE_BROADCAST = 3;   // cuántos candidatos reciben oferta al mismo tiempo
-const UPGRADE_LOOKAHEAD_DAYS = 2; // buscar también D+1 y D+2 si nadie acepta
-
+/* ───── Helpers ───── */
+const UPGRADE_BROADCAST = 3;
+const UPGRADE_LOOKAHEAD_DAYS = 2;
 function sameDate(isoA, isoB) { return isoA.slice(0,10) === isoB.slice(0,10); }
+function shuffle(a){for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}return a;}
 
 async function getUpgradeCandidates(cancelISO) {
   const rows = await getAllRows();
@@ -38,7 +38,7 @@ async function getUpgradeCandidates(cancelISO) {
   const isOk = r =>
     r[SHEET_COL.STATUS] === 'CONFIRMADA' &&
     r[SHEET_COL.DATETIME] &&
-    new Date(r[SHEET_COL.DATETIME]).getTime() > Date.now(); // futuras
+    new Date(r[SHEET_COL.DATETIME]).getTime() > Date.now();
 
   const sameDayLater = rows
     .filter(isOk)
@@ -46,7 +46,6 @@ async function getUpgradeCandidates(cancelISO) {
     .filter(r => new Date(r[SHEET_COL.DATETIME]).getTime() > cancelTs)
     .sort((a,b) => new Date(a[SHEET_COL.DATETIME]) - new Date(b[SHEET_COL.DATETIME]));
 
-  // D+1 / D+2
   const extras = [];
   for (let d = 1; d <= UPGRADE_LOOKAHEAD_DAYS; d++) {
     const dayISO = new Date(cancelISO);
@@ -58,13 +57,9 @@ async function getUpgradeCandidates(cancelISO) {
       .sort((a,b) => new Date(a[SHEET_COL.DATETIME]) - new Date(b[SHEET_COL.DATETIME]));
     extras.push(...chunk);
   }
-
   return [...sameDayLater, ...extras];
 }
 
-/**
- * Envía ofertas para adelantar al hueco `cancelISO`.
- */
 export async function proposeUpgradeToWaitlist(cancelISO) {
   const rows = await getAllRows();
   const occupiedSheet = rows.some(r => r[SHEET_COL.DATETIME] === cancelISO && r[SHEET_COL.STATUS] !== 'CANCELADA');
@@ -80,7 +75,6 @@ export async function proposeUpgradeToWaitlist(cancelISO) {
 
   const candidates = await getUpgradeCandidates(cancelISO);
   if (!candidates.length) return;
-
   const top = candidates.slice(0, UPGRADE_BROADCAST);
 
   for (const r of top) {
@@ -122,12 +116,10 @@ export async function proposeUpgradeToWaitlist(cancelISO) {
   }
 }
 
-/* ───────────────────────────── OLAS (8 min) ───────────────────────────── */
-const UPGRADE_OLAS = new Map(); // slotISO -> { filled, sentTo:Set<string>, timers:NodeJS.Timeout[] }
+/* ─────────── OLAS (8 min) ─────────── */
+const UPGRADE_OLAS = new Map();
 const UPGRADE_DEFAULT_PER_WAVE = 3;
 const UPGRADE_DEFAULT_DELAY_MIN = 8;
-
-function shuffle(a){for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}return a;}
 
 async function isSlotFree(iso){
   const rows = await getAllRows();
@@ -222,10 +214,8 @@ export async function proposeUpgradeStaged(
   const delay   = (overrides.delayMinutes ?? UPGRADE_DEFAULT_DELAY_MIN) * 60 * 1000;
   const random  = overrides.randomizeWithinWave ?? false;
 
-  // Ola 1: mismo día (inmediata)
   await sendWave(cancelISO, sameDayLater, perWave, random);
 
-  // Ola 2: D+1
   const t1 = setTimeout(async ()=>{
     if (ctrl.filled) return;
     if (!(await isSlotFree(cancelISO))) return;
@@ -233,7 +223,6 @@ export async function proposeUpgradeStaged(
   }, delay);
   ctrl.timers.push(t1);
 
-  // Ola 3: D+2 (opcional)
   if ((overrides.lookaheadDays ?? 1) >= 2 && d2.length){
     const t2 = setTimeout(async ()=>{
       if (ctrl.filled) return;
@@ -252,7 +241,7 @@ export function markUpgradeFilled(slotISO){
   UPGRADE_OLAS.delete(slotISO);
 }
 
-/* ─────────────────── MENÚ PRINCIPAL ─────────────────── */
+/* ───────── MENÚ PRINCIPAL ───────── */
 export async function sendMainMenu(toRaw) {
   const to = normalizePhone(toRaw);
   const buttons = [
@@ -318,7 +307,6 @@ export async function startProcedureFlow(toRaw, lang) {
   );
 }
 
-/* (legacy) date/time pickers no críticos, se mantienen */
 export async function sendDatePicker(toRaw, procKey, lang) {
   const to = normalizePhone(toRaw);
   const today = new Date();
@@ -332,7 +320,7 @@ export async function sendDatePicker(toRaw, procKey, lang) {
         title: d.toLocaleDateString(
           lang==='en' ? 'en-US' : 'es-MX',
           { weekday:'short', day:'numeric', month:'short' }
-        )
+        ).replace(/\./g, '')
       }
     };
   });
@@ -362,7 +350,7 @@ export async function sendHourPicker(toRaw, procKey, dateISO, lang) {
   );
 }
 
-/* ─────────── CREAR CITA ─────────── */
+/* ───────── CREAR CITA ───────── */
 export async function finalizeBooking(phoneRaw, name, procKey, isoStart, lang) {
   const phone = normalizePhone(phoneRaw);
   const now   = Date.now();
@@ -377,7 +365,7 @@ export async function finalizeBooking(phoneRaw, name, procKey, isoStart, lang) {
     return { ok:false, reason:'past' };
   }
 
-  // Pre-validación (Sheets + Calendar)
+  // Pre-validación
   const all = await getAllRows();
   const alreadyTaken = all.some(r =>
     r[SHEET_COL.DATETIME] === isoStart && r[SHEET_COL.STATUS] !== 'CANCELADA'
@@ -402,7 +390,7 @@ export async function finalizeBooking(phoneRaw, name, procKey, isoStart, lang) {
 
   // Append provisional
   const ts = new Date().toISOString();
-  const row = Array(14).fill(''); // columnas A:N
+  const row = Array(14).fill('');
 
   row[SHEET_COL.TIMESTAMP]    = ts;
   row[SHEET_COL.NAME]         = name;
@@ -411,7 +399,7 @@ export async function finalizeBooking(phoneRaw, name, procKey, isoStart, lang) {
   row[SHEET_COL.PROCEDURE]    = procKey;
   row[SHEET_COL.STATUS]       = 'CONFIRMADA';
   row[SHEET_COL.LANG]         = lang;
-  row[SHEET_COL.PDF_KEY]      = procKey;
+  row[SHEET_COL.PDF_KEY]      = 'POST'; // no usado, pero indicamos que habrá PDF de “después”
   row[SHEET_COL.PDF_SENT]     = '';
   const fu = new Date(isoStart); fu.setMonth(fu.getMonth() + 6);
   row[SHEET_COL.FOLLOW_DATE]  = fu.toISOString();
@@ -422,7 +410,7 @@ export async function finalizeBooking(phoneRaw, name, procKey, isoStart, lang) {
 
   await appendRow(row);
 
-  // Crear evento Calendar con descripción/ubicación/reminders y apptKey estable (timestamp__phone)
+  // Evento Calendar
   const summary = `${PROCEDURES[procKey][lang]} – ${name} – ${phone}`;
   const durationMin = PROC_DURATION_MIN[procKey] || 30;
   const colorId = PROC_COLOR_ID?.[procKey];
@@ -474,9 +462,9 @@ export async function finalizeBooking(phoneRaw, name, procKey, isoStart, lang) {
     }
   }
 
-  // Mensajería final
+  // Ubicación + PDF de ANTES
   await sendMessage(buildLocation(phone, CLINIC));
-  await sendMessage(buildDocument(phone, PDF_MAP[procKey]));
+  await sendMessage(buildDocument(phone, PRE_APPT_PDF_URL));
 
   const label = new Date(isoStart).toLocaleString(lang==='en'?'en-US':'es-MX', {
     weekday:'long', day:'numeric', month:'long', hour:'2-digit', minute:'2-digit', hour12:true
@@ -503,7 +491,7 @@ export async function finalizeBooking(phoneRaw, name, procKey, isoStart, lang) {
   return { ok:true };
 }
 
-/* ──────────────────── ACTUALIZAR ESTADO ─────────────────── */
+/* ───────── ESTADOS EN SHEETS ───────── */
 export async function markStatus(iso, status) {
   const rows = await getAllRows();
   for (let i = 0; i < rows.length; i++) {
@@ -515,7 +503,7 @@ export async function markStatus(iso, status) {
   }
 }
 
-/* ────────── UBICACIÓN + MENÚ ────────── */
+/* ───────── UBICACIÓN + CTA ───────── */
 export async function sendLocationPlusText(toRaw) {
   const to = normalizePhone(toRaw);
   await sendMessage(buildLocation(to, CLINIC));
@@ -536,7 +524,7 @@ export async function sendLocationPlusText(toRaw) {
   );
 }
 
-/* ────────── INFO DETALLADA DEL PROCEDIMIENTO ────────── */
+/* ───────── INFO DETALLADA ───────── */
 export async function sendProcedureInfo(toRaw, procKey, lang) {
   const to = normalizePhone(toRaw);
   const det = PROC_DETAILS[procKey];
@@ -559,7 +547,7 @@ export async function sendProcedureInfo(toRaw, procKey, lang) {
   );
 }
 
-/* ──────────── PANTALLA “¡EXCELENTE ELECCIÓN!” ─────────── */
+/* ───────── INTRO “EXCELENTE ELECCIÓN” ───────── */
 export async function sendScheduleIntro(toRaw, procKey, lang) {
   const to = normalizePhone(toRaw);
   const procName = PROCEDURES[procKey][lang];
@@ -584,7 +572,7 @@ export async function sendScheduleIntro(toRaw, procKey, lang) {
   );
 }
 
-/* ───────────── LISTA DE DÍAS ───────────── */
+/* ───────── LISTA DE DÍAS ───────── */
 export async function sendDayList(toRaw, procKey, lang) {
   const to = normalizePhone(toRaw);
   const today = new Date();
@@ -636,7 +624,7 @@ export async function sendDayList(toRaw, procKey, lang) {
   );
 }
 
-/* ─────────── MAÑANA / TARDE ─────────── */
+/* ───────── MAÑANA/TARDE ───────── */
 export async function sendPeriodList(toRaw, procKey, dateISO, lang) {
   const to = normalizePhone(toRaw);
   const rows = [
@@ -661,21 +649,19 @@ export async function sendPeriodList(toRaw, procKey, dateISO, lang) {
   );
 }
 
-/* ─────────── LISTA DE HORARIOS ─────────── */
+/* ───────── LISTA DE HORAS ───────── */
 export async function sendTimeList(toRaw, procKey, dateISO, period, lang) {
   const to = normalizePhone(toRaw);
   const tz    = TZ_OFFSET;
   const first = new Date(`${dateISO}T${period === 'morning' ? '09:00:00' : '15:40:00'}${tz}`);
   const last  = new Date(`${dateISO}T${period === 'morning' ? '15:00:00' : '21:00:00'}${tz}`);
 
-  // 1️⃣ Horas ya reservadas (Sheets)
   const reservedSheet = (await getAllRows())
     .filter(r =>
       r[SHEET_COL.DATETIME]?.startsWith(dateISO) &&
       r[SHEET_COL.STATUS] !== 'CANCELADA')
     .map(r => r[SHEET_COL.DATETIME].slice(11,16));
 
-  // 2️⃣ Eventos del Calendar (bloqueos/reuniones)
   const events = await listCalendarEventsByDate(dateISO);
 
   const rows = [];
